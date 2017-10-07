@@ -1,0 +1,91 @@
+#+TITLE: deepldsc
+#+AUTHOR: Abhishek Sarkar
+#+EMAIL: aksarkar@uchicago.edu
+#+OPTIONS: ':nil *:t -:t ::t <:t H:3 \n:nil ^:t arch:headline author:t
+#+OPTIONS: broken-links:nil c:nil creator:nil d:(not "LOGBOOK") date:t e:t
+#+OPTIONS: email:nil f:t inline:t num:t p:nil pri:nil prop:nil stat:t tags:t
+#+OPTIONS: tasks:t tex:t timestamp:t title:t toc:t todo:t |:t
+#+LANGUAGE: en
+#+SELECT_TAGS: export
+#+EXCLUDE_TAGS: noexport
+#+CREATOR: Emacs 25.1.1 (Org mode 9.1.1)
+* Setup :noexport:
+
+  #+BEGIN_SRC emacs-lisp
+    (setq python-shell-prompt-detect-failure-warning nil)
+  #+END_SRC
+
+  #+RESULTS:
+
+  #+BEGIN_SRC shell :var RESOURCES="--mem=36G --partition=broadwl"
+    sbatch $RESOURCES --job-name=ipython3 --output=ipython3.out
+    #!/bin/bash
+    source activate nwas
+    rm -f $HOME/.local/share/jupyter/runtime/kernel-aksarkar.json
+    ipython3 kernel --ip=$(hostname -i) -f kernel-aksarkar.json
+  #+END_SRC
+
+  #+RESULTS:
+  : Submitted batch job 37258338
+
+* Get the data
+
+#+BEGIN_SRC shell :dir $SCRATCH/play
+  wget -r -l 1 -A "*.sumstats" https://data.broadinstitute.org/alkesgroup/sumstats_formatted/
+  curl -sfS "https://data.broadinstitute.org/alkesgroup/LDSCORE/1000G_Phase1_baseline_ldscores.tgz" | tar xz
+#+END_SRC
+
+#+BEGIN_SRC ipython :session kernel-aksarkar.json :results none
+  import pandas
+
+  uc = pandas.read_table('/scratch/midway2/aksarkar/play/data.broadinstitute.org/alkesgroup/sumstats_formatted/PASS_Ulcerative_Colitis.sumstats')
+  features = pandas.concat(
+      [uc.merge(pandas.read_table('/scratch/midway2/aksarkar/play/baseline/baseline.{}.l2.ldscore.gz'.format(chrom), chunk_size=1000), by='SNP') for chrom in range(1, 23)]
+  )
+#+END_SRC
+
+* Idea
+
+~ldsc~ is a linear model:
+
+\[ E[\Chi^2] = N \sum_c \tau_c l(j, c) + N a + 1 \]
+
+\[ y \sim N(N (X w + b), \sigma^2) \]
+
+Let's try to fit a deep network instead:
+
+\[ y \sim N(h(X), \sigma^2) \]
+
+#+BEGIN_SRC ipython :session kernel-aksarkar.json :results none
+  import tensorflow as tf
+
+  slim = tf.contrib.slim
+
+  tf.reset_default_graph()
+
+  # Minibatch (SNPs are observations!)
+  n = 200
+  # Features (annotations)
+  p = annot.shape[1]
+
+  x = tf.placeholder(dtype=tf.float32, shape=[n, p])
+  y = tf.placeholder(dtype=tf.float32, shape=[n, 1])
+
+  with slim.arg_scope([slim.fully_connected],
+                      activation_fn=tf.nn.relu,
+                      weights_initializer=tf.truncated_normal_initializer(0.0, 0.01)):
+      mlp = slim.stack(x, slim.fully_connected, [p, p, p], scope='fc')
+  mlp = slim.linear(mlp, num_outputs=1, weights_initializer=tf.truncated_normal_initializer(0.0, 0.01))
+
+  optimizer = tf.train.RMSPropOptimizer(learning_rate=0.01)
+  loss = tf.losses.mean_squared_error(y, mlp)
+  train = slim.learning.create_train_op(loss, optimizer)
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+:END:
+
+#+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer
+  slim.learning.train(train, '/scratch/midway2/aksarkar/play/', )
+#+END_SRC
