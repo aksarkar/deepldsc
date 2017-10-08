@@ -61,35 +61,52 @@
   \[ y \sim N(h(X), \sigma^2) \]
 
   #+BEGIN_SRC ipython :session kernel-aksarkar.json :results none
-  import tensorflow as tf
+    import tensorflow as tf
 
-  slim = tf.contrib.slim
+    slim = tf.contrib.slim
 
-  tf.reset_default_graph()
+    tf.reset_default_graph()
 
-  # Minibatch (SNPs are observations!)
-  n = 200
-  # Features (annotations)
-  p = annot.shape[1]
+    num_snps = features.shape[0]
+    # Minibatches of SNPs (!)
+    batch_size = 200
+    num_features = features.shape[1] - 10
+    num_epochs = 1000
 
-  x = tf.placeholder(dtype=tf.float32, shape=[n, p])
-  y = tf.placeholder(dtype=tf.float32, shape=[n, 1])
+    with tf.name_scope('input'):
+        x_init = tf.placeholder(dtype=tf.float32, shape=[num_snps, num_features])
+        y_init = tf.placeholder(dtype=tf.float32, shape=[num_snps, 1])
+        xs = tf.Variable(x_init, trainable=False, collections=[])
+        ys = tf.Variable(y_init, trainable=False, collections=[])
+        x, y = tf.train.batch(
+            tf.train.slice_input_producer([xs, ys], num_epochs=num_epochs),
+            batch_size=batch_size)
 
-  with slim.arg_scope([slim.fully_connected],
-                      activation_fn=tf.nn.relu,
-                      weights_initializer=tf.truncated_normal_initializer(0.0, 0.01)):
-      mlp = slim.stack(x, slim.fully_connected, [p, p, p], scope='fc')
-  mlp = slim.linear(mlp, num_outputs=1, weights_initializer=tf.truncated_normal_initializer(0.0, 0.01))
+    with slim.arg_scope([slim.fully_connected],
+                        activation_fn=tf.nn.relu,
+                        weights_initializer=tf.truncated_normal_initializer(0.0, 0.01)):
+        mlp = slim.stack(x, slim.fully_connected, [num_features] * 3, scope='fc')
+    mlp = slim.linear(mlp, num_outputs=1, weights_initializer=tf.truncated_normal_initializer(0.0, 0.01))
 
-  optimizer = tf.train.RMSPropOptimizer(learning_rate=0.01)
-  loss = tf.losses.mean_squared_error(y, mlp)
-  train = slim.learning.create_train_op(loss, optimizer)
+    optimizer = tf.train.AdamOptimizer(learning_rate=0.01)
+    loss = tf.losses.mean_squared_error(y, mlp)
+    train = slim.learning.create_train_op(loss, optimizer)
+  #+END_SRC
+
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results none
+    def init_data(sess):
+        sess.run(xs.initializer, feed_dict={x_init: features.iloc[:,10:]})
+        sess.run(ys.initializer, feed_dict={y_init: features['CHISQ'].reshape(-1, 1)})
+  #+END_SRC
+
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer :async t
+    slim.learning.train(train_op=train,
+                        logdir='/scratch/midway2/aksarkar/play/',
+                        init_fn=init_data,
+                        number_of_steps=num_epochs * num_snps // batch_size,
+    )
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
   :END:
-
-  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer
-  slim.learning.train(train, '/scratch/midway2/aksarkar/play/', )
-  #+END_SRC
