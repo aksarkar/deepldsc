@@ -36,13 +36,16 @@
   curl -sfS "https://data.broadinstitute.org/alkesgroup/LDSCORE/1000G_Phase1_cell_type_ldscores.tgz" | tar xz
   #+END_SRC
 
-  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results none
-  import pandas
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer
+    import pandas
 
-  uc = pandas.read_table('/scratch/midway2/aksarkar/play/data.broadinstitute.org/alkesgroup/sumstats_formatted/PASS_Ulcerative_Colitis.sumstats')
-  features = pandas.concat(
-      [uc.merge(pandas.read_table('/scratch/midway2/aksarkar/play/baseline/baseline.{}.l2.ldscore.gz'.format(chrom), chunk_size=1000), by='SNP') for chrom in range(1, 23)]
-  )
+    uc = pandas.read_table('/scratch/midway2/aksarkar/play/data.broadinstitute.org/alkesgroup/sumstats_formatted/PASS_Ulcerative_Colitis.sumstats')
+
+    features = pandas.concat(
+        uc.merge(chunk, on='SNP') for chrom in range(1, 23)
+        for chunk in pandas.read_table('/scratch/midway2/aksarkar/play/baseline/baseline.{}.l2.ldscore.gz'.format(chrom), chunksize=1000)
+    )
+    features.shape
   #+END_SRC
 
 * Idea
