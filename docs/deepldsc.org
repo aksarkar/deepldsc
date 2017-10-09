@@ -17,7 +17,7 @@
 
   #+RESULTS:
 
-  #+BEGIN_SRC shell :var RESOURCES="--mem=36G --partition=broadwl"
+  #+BEGIN_SRC shell :var RESOURCES="--mem=36G --partition=gpu2"
     sbatch $RESOURCES --job-name=ipython3 --output=ipython3.out
     #!/bin/bash
     source activate nwas
