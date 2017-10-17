@@ -17,38 +17,54 @@
 
   #+RESULTS:
 
-  #+BEGIN_SRC shell :var RESOURCES="--mem=36G --partition=gpu2"
+  #+NAME: ipython3-kernel
+  #+BEGIN_SRC shell :dir (concat (file-name-as-directory (getenv "SCRATCH")) "deepldsc") :var RESOURCES="--mem=36G --partition=gpu2 --gres=gpu:1"
     sbatch $RESOURCES --job-name=ipython3 --output=ipython3.out
-    #!/bin/bash
-    source activate nwas
+    #!/bin/bash -l
+    source activate deepldsc
     rm -f $HOME/.local/share/jupyter/runtime/kernel-aksarkar.json
     ipython3 kernel --ip=$(hostname -i) -f kernel-aksarkar.json
   #+END_SRC
 
-  #+RESULTS:
-  : Submitted batch job 37258338
+  #+RESULTS: ipython3-kernel
+  : Submitted batch job 38318101
+
+  #+NAME: imports
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer
+    import deeplift.conversion.keras_conversion as kc
+    import keras
+    import os
+    import numpy as np
+    import pandas as pd
+    import tensorflow as tf
+
+    tf.__file__
+  #+END_SRC
+
+  #+RESULTS: imports
+  :RESULTS:
+  : '/home/aksarkar/.conda/envs/deepldsc/lib/python3.6/site-packages/tensorflow/__init__.py'
+  :END:
 
 * Get the data
 
-  #+BEGIN_SRC shell :dir $SCRATCH/play
+  #+BEGIN_SRC shell :dir $SCRATCH/deepldsc
   wget -r -l 1 -A "*.sumstats" "https://data.broadinstitute.org/alkesgroup/sumstats_formatted/"
   curl -sfS "https://data.broadinstitute.org/alkesgroup/LDSCORE/1000G_Phase1_baseline_ldscores.tgz" | tar xz
   curl -sfS "https://data.broadinstitute.org/alkesgroup/LDSCORE/1000G_Phase1_cell_type_ldscores.tgz" | tar xz
   #+END_SRC
 
   #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer :async t
-    import pandas
-
-    uc = pandas.read_table('/scratch/midway2/aksarkar/play/data.broadinstitute.org/alkesgroup/sumstats_formatted/PASS_Ulcerative_Colitis.sumstats')
+    uc = pd.read_table('/scratch/midway2/aksarkar/deepldsc/data.broadinstitute.org/alkesgroup/sumstats_formatted/PASS_Ulcerative_Colitis.sumstats')
 
     # Hold out chr22
-    training_data = pandas.concat(
+    training_data = pd.concat(
         uc.merge(chunk, on='SNP') for chrom in range(1, 22)
-        for chunk in pandas.read_table('/scratch/midway2/aksarkar/play/baseline/baseline.{}.l2.ldscore.gz'.format(chrom), chunksize=1000)
+        for chunk in pd.read_table('/scratch/midway2/aksarkar/deepldsc/baseline/baseline.{}.l2.ldscore.gz'.format(chrom), chunksize=1000)
     )
-    test_data = pandas.concat(
+    test_data = pd.concat(
         uc.merge(chunk, on='SNP') for chrom in range(22, 23)
-        for chunk in pandas.read_table('/scratch/midway2/aksarkar/play/baseline/baseline.{}.l2.ldscore.gz'.format(chrom), chunksize=1000)
+        for chunk in pd.read_table('/scratch/midway2/aksarkar/deepldsc/baseline/baseline.{}.l2.ldscore.gz'.format(chrom), chunksize=1000)
     )
     training_data.shape, test_data.shape
   #+END_SRC
@@ -58,8 +74,6 @@
   : ((967394, 63), (13897, 63))
   :END:
 
-  https://www.tensorflow.org/programmers_guide/datasets
-
 * Idea
 
   ~ldsc~ is a linear model:
@@ -68,40 +82,85 @@
 
   \[ y \sim N(N (X w + b), \sigma^2) \]
 
+  #+NAME: ldsc
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer :async t
+    ldsc = keras.models.Sequential([
+      keras.layers.Dense(1, input_dim=53)
+    ])
+    ldsc.compile(optimizer='rmsprop', loss='mse')
+    ldsc.fit(x=training_data.iloc[:,10:].values,
+             y=training_data['CHISQ'].values,
+             epochs=4,
+    )
+    ldsc.save(os.path.join(os.getenv('SCRATCH'), 'deepldsc', 'uc-ldsc.hdf5'))
+    ldsc.evaluate(x=test_data.iloc[:,10:].values,
+                  y=test_data['CHISQ'].values)
+  #+END_SRC
+
+  #+RESULTS: ldsc
+  :RESULTS:
+  : 8.3588527845651832
+  :END:
+
   Let's try to fit a deep network instead:
 
   \[ y \sim N(h(X), \sigma^2) \]
 
-  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results none :async t
-    import os
-    import tensorflow as tf
-
-    feature_columns = training_data.columns[10:]
-    training_input = tf.estimator.inputs.pandas_input_fn(
-        x=training_data[feature_columns],
-        y=training_data['CHISQ'],
-        batch_size=1000,
-        num_epochs=10,
-        shuffle=True,
-        target_column='chisq',
+  #+NAME: deepldsc
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer :async t
+    deepldsc = keras.models.Sequential([
+      keras.layers.Dense(32, input_dim=53, activation='relu'),
+      keras.layers.Dense(16, activation='relu'),
+      keras.layers.Dense(1)
+    ])
+    deepldsc.compile(optimizer=keras.optimizers.RMSprop(lr=1e-4),
+                     loss='mse')
+    deepldsc.fit(x=training_data.iloc[:,10:].values,
+                 y=training_data['CHISQ'].values,
+                 epochs=4,
     )
-    test_input = tf.estimator.inputs.pandas_input_fn(
-        x=test_data[feature_columns],
-        y=test_data['CHISQ'],
-        num_epochs=1,  # This tells evaluate to stop after seeing the full data
-        shuffle=False,
-        target_column='chisq',
-    )
-    feature_columns = [tf.feature_column.numeric_column(c) for c in feature_columns]
-    deepldsc = tf.contrib.learn.DNNRegressor(
-        feature_columns=feature_columns,
-        hidden_units=[len(feature_columns) // i for i in (1, 2, 4)],
-        optimizer=tf.train.AdamOptimizer(learning_rate=1e-3),
-        model_dir=os.path.join(os.getenv('SCRATCH'), 'play', 'model'),
-    ).fit(input_fn=training_input).evaluate(input_fn=test_input)
+    deepldsc.save(os.path.join(os.getenv('SCRATCH'), 'deepldsc', 'uc-deepldsc.hdf5'))
+    deepldsc.evaluate(x=test_data.iloc[:,10:].values,
+                      y=test_data['CHISQ'].values)
   #+END_SRC
 
-  #+RESULTS:
+  #+RESULTS: deepldsc
   :RESULTS:
-  : 2.7722633
+  : 6.7853382878434942
   :END:
+
+* Interpret the model using deeplift
+
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer :async t
+    deepldsc = keras.models.load_model(os.path.join(os.getenv('SCRATCH'), 'deepldsc', 'uc-deepldsc.hdf5'))
+  #+END_SRC
+
+  #+NAME: deeplift
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer :async t
+    scores = kc.convert_sequential_model(deepldsc).get_target_contribs_func(find_scores_layer_idx=1, target_layer_idx=-1)(
+      task_idx=0,
+      input_data_list=[test_data.iloc[:,10:]],
+      batch_size=32,
+      progress_update=1000,
+    )
+    scores = pd.DataFrame(scores)
+    scores.columns = test_data.columns[10:]
+    scores.index = test_data['SNP']
+  #+END_SRC
+
+  #+RESULTS: deeplift
+  :RESULTS:
+  5b6c4135-759e-476c-a651-46a29d5a053f
+  :END:
+
+  Unlike ~ldsc~, ~deeplift~ on ~deepldsc~ propagates down to each SNP which
+  means we can do things like look for heterogeneity among SNPs.
+
+  #+BEGIN_SRC ipython :ipyfile :session kernel-aksarkar.json :results raw drawer :async t
+    import sklearn.manifold
+
+    embedding = sklearn.manifold.TSNE().fit_transform(scores)
+    plt.clf()
+    plt.plot(embedding[:,0], embedding[:,1])
+  #+END_SRC
+
