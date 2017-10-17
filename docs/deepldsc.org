@@ -175,3 +175,60 @@
   [[file:tsne.svg]]
   :END:
 
+* Multi-task deepldsc
+
+  The idea of the ~deepldsc~ architecture is to perform dimensionality
+  reduction on the features to automatically account for complicated
+  correlations between them.
+
+  We can do the same on the phenotypes, and hopefully improve performance on a
+  multi-task problem of predicting the \(\Chi^2\) statistics of all of the
+  phenotypes simultaneously.
+
+  The only existing method is cross-trait ~ldsc~, which is actually a
+  univariate regression:
+
+  \[E[z_1 z_2] = \frac{\sqrt{N_1 N_2} \rho}{M} l_j + \mathrm{const}]
+
+  *TODO:* Nobody's actually done partitioned cross-trait ~ldsc~ yet?
+
+  #+NAME: bivariate-sumstats
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer :async t
+    import functools
+    import glob
+
+    ibd = pd.read_table('/scratch/midway2/aksarkar/deepldsc/data.broadinstitute.org/alkesgroup/sumstats_formatted/PASS_IBD.sumstats')
+    bivariate = uc.join(ibd, on='SNP', how='outer')
+
+    # Hold out chr22
+    training_data = pd.concat(
+        bivariate.merge(chunk, on='SNP') for chrom in range(1, 22)
+        for chunk in pd.read_table('/scratch/midway2/aksarkar/deepldsc/baseline/baseline.{}.l2.ldscore.gz'.format(chrom), chunksize=1000)
+    )
+    test_data = pd.concat(
+        bivariate.merge(chunk, on='SNP') for chrom in range(22, 23)
+        for chunk in pd.read_table('/scratch/midway2/aksarkar/deepldsc/baseline/baseline.{}.l2.ldscore.gz'.format(chrom), chunksize=1000)
+    )
+    training_data.shape, test_data.shape, pd.isnull(bivariate) / bivariate.values.ravel().shape[0]
+  #+END_SRC
+
+  Suppose we actually fit a multi-task model:
+
+  #+NAME: multi-deepldsc
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer :async t
+    multi_deepldsc = keras.models.Sequential([
+      keras.layers.Dense(32, input_dim=53, activation='relu'),
+      keras.layers.Dense(16, activation='relu'),
+      keras.layers.Dense(2)
+    ])
+    deepldsc.compile(optimizer=keras.optimizers.RMSprop(lr=1e-4),
+                     loss='mse')
+    deepldsc.fit(x=training_data.iloc[:,10:].values,
+                 y=training_data[['CHISQ.x', 'CHISQ.y']].values,
+                 epochs=4,
+    )
+    deepldsc.save(os.path.join(os.getenv('SCRATCH'), 'deepldsc', 'uc-deepldsc.hdf5'))
+    deepldsc.evaluate(x=test_data.iloc[:,10:].values,
+                      y=test_data[['CHISQ.x', 'CHISQ.y']].values,
+    )
+  #+END_SRC
