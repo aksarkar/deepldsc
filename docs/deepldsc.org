@@ -48,7 +48,7 @@
 
 * Get the data
 
-  #+BEGIN_SRC shell :dir $SCRATCH/deepldsc
+  #+BEGIN_SRC shell :dir (concat (file-name-as-directory (getenv "SCRATCH")) "deepldsc")
   wget -r -l 1 -A "*.sumstats" "https://data.broadinstitute.org/alkesgroup/sumstats_formatted/"
   curl -sfS "https://data.broadinstitute.org/alkesgroup/LDSCORE/1000G_Phase1_baseline_ldscores.tgz" | tar xz
   curl -sfS "https://data.broadinstitute.org/alkesgroup/LDSCORE/1000G_Phase1_cell_type_ldscores.tgz" | tar xz
@@ -214,6 +214,8 @@
 
   #+RESULTS: bivariate-sumstats
 
+  *TODO:* Figure out what the reference input for deeplift should be
+
   Suppose we actually fit a multi-task model:
 
   #+NAME: multi-deepldsc
@@ -239,3 +241,90 @@
   :RESULTS:
   : 0.78156761889424764
   :END:
+
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer :async t
+    multi_deepldsc_score_fn = kc.convert_sequential_model(multi_deepldsc).get_target_contribs_func(find_scores_layer_idx=0, target_layer_idx=-1)
+    multi_deepldsc_scores = np.array([multi_deepldsc_score_fn(
+      task_idx=i,
+      input_data_list=[test_data.iloc[:,-53:]],
+      batch_size=32,
+      progress_update=1000,) for i in range(2)])
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC shell :dir (concat (file-name-as-directory (getenv "SCRATCH")) "deepldsc")
+  curl --ftp-pasv -O "ftp://ftp.ncbi.nlm.nih.gov/snp/organisms/human_9606_b150_GRCh37p13/BED/bed_chr_22.bed.gz"
+  #+END_SRC
+
+  #+RESULTS:
+
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer :async t
+    dbsnp = pd.read_table(os.path.join(os.getenv('SCRATCH'), 'deepldsc', 'bed_chr_22.bed.gz'), header=None, skiprows=1)
+    dbsnp.columns = ['chr', 'start', 'end', 'SNP', 'score', 'strand']
+    test_data['pos'] = test_data.merge(dbsnp, on='SNP')['start']
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython :ipyfile multi-deepldsc-deeplift.svg :session kernel-aksarkar.json :results raw drawer :async t
+    fig, ax = plt.subplots(4, 1, sharex=True)
+    fig.set_size_inches(11, 8)
+    ax[0].scatter(x=test_data['pos'], y=test_data['CHISQ_x'], marker='o', s=4)
+    ax[0].set_ylabel('UC $\chi^2$')
+    ax[1].plot(test_data['pos'], multi_deepldsc_scores[0], 'o', markersize=4)
+    ax[1].set_ylabel('UC deeplift score')
+    ax[2].scatter(x=test_data['pos'], y=test_data['CHISQ_y'], marker='o', s=4)
+    ax[2].set_ylabel('IBD $\chi^2$')
+    ax[3].plot(test_data['pos'], multi_deepldsc_scores[1], 'o', markersize=4)
+    ax[3].set_ylabel('IBD deeplift score')
+    plt.xlabel('Position on chromosome 22')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  : Text(0.5,0,'Position on chromosome 22')
+  [[file:multi-deepldsc-deeplift.svg]]
+  :END:
+
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer :async t
+    def score_heatmap(scores, test_data):
+      absmax = abs(scores).max()
+      plt.clf()
+      plt.gcf().set_size_inches(11, 4)
+      plt.imshow(scores, cmap='RdBu_r', vmin=-absmax, vmax=absmax)
+      plt.gca().set_xticks(np.arange(53))
+      plt.gca().set_xticklabels(test_data.columns[-53:])
+      plt.gca().set_yticks([0, 1])
+      plt.gca().set_yticklabels(['UC', 'IBD'])
+      for tick in plt.gca().get_xticklabels():
+        tick.set_rotation(90)
+      plt.colorbar()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython :ipyfile uc-ibd-shared-hit.svg :session kernel-aksarkar.json :results raw drawer :async t
+    score_heatmap(multi_deepldsc_scores[:,test_data['CHISQ_y'].idxmax(),:], test_data)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  [[file:uc-ibd-shared-hit.svg]]
+  :END:
+
+  #+BEGIN_SRC ipython :ipyfile ibd-top-hit.svg :session kernel-aksarkar.json :results raw drawer :async t
+    score_heatmap(multi_deepldsc_scores[:,test_data['CHISQ_x'].idxmax(),:], test_data)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  [[file:ibd-top-hit.svg]]
+  :END:
+
