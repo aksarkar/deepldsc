@@ -27,7 +27,7 @@
   #+END_SRC
 
   #+RESULTS: ipython3-kernel
-  : Submitted batch job 38321883
+  : Submitted batch job 38386410
 
   #+NAME: imports
   #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer
@@ -198,7 +198,7 @@
     import glob
 
     ibd = pd.read_table('/scratch/midway2/aksarkar/deepldsc/data.broadinstitute.org/alkesgroup/sumstats_formatted/PASS_IBD.sumstats')
-    bivariate = uc.join(ibd, on='SNP', how='outer')
+    bivariate = uc.merge(ibd, on='SNP')
 
     # Hold out chr22
     training_data = pd.concat(
@@ -209,8 +209,10 @@
         bivariate.merge(chunk, on='SNP') for chrom in range(22, 23)
         for chunk in pd.read_table('/scratch/midway2/aksarkar/deepldsc/baseline/baseline.{}.l2.ldscore.gz'.format(chrom), chunksize=1000)
     )
-    training_data.shape, test_data.shape, pd.isnull(bivariate) / bivariate.values.ravel().shape[0]
+    training_data.shape, test_data.shape
   #+END_SRC
+
+  #+RESULTS: bivariate-sumstats
 
   Suppose we actually fit a multi-task model:
 
@@ -221,14 +223,19 @@
       keras.layers.Dense(16, activation='relu'),
       keras.layers.Dense(2)
     ])
-    deepldsc.compile(optimizer=keras.optimizers.RMSprop(lr=1e-4),
-                     loss='mse')
-    deepldsc.fit(x=training_data.iloc[:,10:].values,
-                 y=training_data[['CHISQ.x', 'CHISQ.y']].values,
-                 epochs=4,
+    multi_deepldsc.compile(optimizer=keras.optimizers.RMSprop(lr=1e-6, clipnorm=1.0),
+                           loss='msle')
+    multi_deepldsc.fit(x=training_data.iloc[:,-53:].values,
+                       y=training_data[['CHISQ_x', 'CHISQ_y']].values,
+                       epochs=4,
     )
-    deepldsc.save(os.path.join(os.getenv('SCRATCH'), 'deepldsc', 'uc-deepldsc.hdf5'))
-    deepldsc.evaluate(x=test_data.iloc[:,10:].values,
-                      y=test_data[['CHISQ.x', 'CHISQ.y']].values,
+    multi_deepldsc.save(os.path.join(os.getenv('SCRATCH'), 'deepldsc', 'uc-ibd-deepldsc.hdf5'))
+    multi_deepldsc.evaluate(x=test_data.iloc[:,-53:].values,
+                            y=test_data[['CHISQ_x', 'CHISQ_y']].values,
     )
   #+END_SRC
+
+  #+RESULTS: multi-deepldsc
+  :RESULTS:
+  : 0.78156761889424764
+  :END:
