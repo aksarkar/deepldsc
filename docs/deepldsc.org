@@ -27,7 +27,7 @@
   #+END_SRC
 
   #+RESULTS: ipython3-kernel
-  : Submitted batch job 38386410
+  : Submitted batch job 38400065
 
   #+NAME: imports
   #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer
@@ -213,8 +213,9 @@
   #+END_SRC
 
   #+RESULTS: bivariate-sumstats
-
-  *TODO:* Figure out what the reference input for deeplift should be
+  :RESULTS:
+  : ((966824, 66), (13896, 66))
+  :END:
 
   Suppose we actually fit a multi-task model:
 
@@ -243,10 +244,19 @@
   :END:
 
   #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer :async t
+    multi_deepldsc = keras.models.load_model(os.path.join(os.getenv('SCRATCH'), 'deepldsc', 'uc-ibd-deepldsc.hdf5'))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython :session kernel-aksarkar.json :results raw drawer :async t
     multi_deepldsc_score_fn = kc.convert_sequential_model(multi_deepldsc).get_target_contribs_func(find_scores_layer_idx=0, target_layer_idx=-1)
     multi_deepldsc_scores = np.array([multi_deepldsc_score_fn(
       task_idx=i,
       input_data_list=[test_data.iloc[:,-53:]],
+      input_references_list=[test_data.iloc[:,-53:].median(axis=0).values],
       batch_size=32,
       progress_update=1000,) for i in range(2)])
   #+END_SRC
@@ -302,7 +312,7 @@
       plt.gca().set_yticks([0, 1])
       plt.gca().set_yticklabels(['UC', 'IBD'])
       for tick in plt.gca().get_xticklabels():
-        tick.set_rotation(90)
+        tick.set_rotation(-90)
       plt.colorbar()
   #+END_SRC
 
