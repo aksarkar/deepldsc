@@ -1,0 +1,4 @@
+#+AUTHOR: Abhishek Sarkar
+#+EMAIL: aksarkar@uchicago.edu
+#+EXCLUDE_TAGS: noexport
+#+PROPERTY: header-args:ipython+ :session kernel-aksarkar.json :results raw drawer :async t :eval never-export
